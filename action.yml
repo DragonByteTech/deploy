@@ -1,0 +1,5 @@
+name: 'DBTech Deploy'
+description: 'Deploys to DragonByte Technologies'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
