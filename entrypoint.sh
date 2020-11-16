@@ -70,6 +70,7 @@ then
 
 	rm -rf deployment/$ADDON_ROOT/.git
 	rm -rf deployment/$ADDON_ROOT/.github
+	rm -rf deployment/$ADDON_ROOT/_dev
 	rm -rf deployment/$ADDON_ROOT/_output
 
 else
