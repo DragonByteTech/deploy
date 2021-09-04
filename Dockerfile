@@ -1,4 +1,4 @@
-FROM debian:stable-20190122-slim
+FROM debian:stable-slim
 
 LABEL "com.github.actions.name"="Rsync Deploy"
 LABEL "com.github.actions.description"="Deploy to a remote server with rsync via ssh."
