@@ -5,6 +5,9 @@ LABEL "com.github.actions.description"="Deploy to a remote server with rsync via
 LABEL "com.github.actions.icon"="upload-cloud"
 LABEL "com.github.actions.color"="orange"
 
+RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648ACFD622F3D138
+RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 0E98404D386FA1D9
+
 RUN apt-get update && \ 
     apt-get install -y \ 
     openssh-client \ 
