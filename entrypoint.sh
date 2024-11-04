@@ -9,7 +9,7 @@ set -o nounset
 # Catch the error in case mysqldump fails (but gzip succeeds) in `mysqldump |gzip`
 set -o pipefail
 
-SSH_USER=dragonb
+SSH_USER=dbtech
 HOST_NAME=dragonbyte-tech.com
 
 if [[ $BRANCH =~ ^refs/tags/.* ]];
