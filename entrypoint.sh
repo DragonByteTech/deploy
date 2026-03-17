@@ -10,7 +10,7 @@ set -o nounset
 set -o pipefail
 
 SSH_USER=dbtech
-HOST_NAME=dragonbyte-tech.com
+HOST_NAME=dragonbytetech.com
 
 if [[ $BRANCH =~ ^refs/tags/.* ]];
 then
