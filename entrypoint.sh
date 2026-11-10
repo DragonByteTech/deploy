@@ -36,7 +36,8 @@ then
   exit 1
 fi
 
-cd ..
+workspaceDir="${GITHUB_WORKSPACE:-$PWD}"
+cd "$(mktemp -d)"
 
 mkdir deployment
 
@@ -46,7 +47,7 @@ then
 	addonDir="$releaseDir/$ADDON_ROOT"
 
 	mkdir -p deployment/$ADDON_ROOT
-	cp -R workspace/* deployment/$ADDON_ROOT
+	cp -R "$workspaceDir"/* deployment/$ADDON_ROOT
 
 	if [ -d deployment/$ADDON_ROOT/_files ]; then
 		cp -R deployment/$ADDON_ROOT/_files/* deployment/upload
@@ -75,7 +76,7 @@ then
 
 else
 	releaseDir="vbec_products/$ADDON_DIR/$version"
-	cp -R workspace/* deployment
+	cp -R "$workspaceDir"/* deployment
 
 	rm -rf "deployment/.git"
 	rm -rf "deployment/.github"
@@ -84,10 +85,10 @@ fi
 
 printf -- 'Setting up SSH... '
 
-mkdir ~/.ssh
+mkdir -p ~/.ssh
 touch ~/.ssh/known_hosts
 
-mkdir /root/.ssh
+mkdir -p /root/.ssh
 touch /root/.ssh/known_hosts
 
 echo "$SSH_PRIVATE_KEY" > /root/.ssh/deploy_key
