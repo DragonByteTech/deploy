@@ -1,81 +1,102 @@
 #!/usr/bin/env bash
+#
+# Environment:
+#   BRANCH              required: the pushed ref, e.g. refs/heads/release/2.3.0.
+#   ADDON_DIR           required: the product's directory on the server.
+#   SSH_PRIVATE_KEY     required: the deploy user's private key.
+#   ADDON_ROOT          where the repository root goes in the release, e.g.
+#                       upload/src/addons/Vendor/Name. Empty uploads the
+#                       repository as it is.
+#   DEPLOY_KNOWN_HOSTS  the server's known_hosts lines. Without it, the host
+#                       key is taken from ssh-keyscan on every run.
 
-# Exit on error. Append "|| true" if you expect an error.
-set -o errexit  # same as -e
-# Exit on error inside any functions or subshells.
+set -o errexit
 set -o errtrace
-# Do not allow use of undefined vars. Use ${VAR:-} to use an undefined VAR
 set -o nounset
-# Catch the error in case mysqldump fails (but gzip succeeds) in `mysqldump |gzip`
 set -o pipefail
 
 SSH_USER=dbtech
 HOST_NAME=dragonbytetech.com
 
-if [[ $BRANCH =~ ^refs/tags/.* ]];
-then
-	version=$(echo "$BRANCH" | sed 's#refs/tags/##')
+fail() {
+	echo "$*" >&2
+	exit 1
+}
 
-	# Now update the version variable with the hotfix removed as we don't want that going forward
-	version=$(echo "$version" | sed 's#[-hotfix].*$##')
+BRANCH="${BRANCH:-}"
+ADDON_DIR="${ADDON_DIR:-}"
+ADDON_ROOT="${ADDON_ROOT:-}"
 
-else
-	branch=`echo $BRANCH | cut -d/ -f3`
-	version=`echo $BRANCH | cut -d/ -f4`
+# Tags and hotfix branches drop everything from the first "-", so that
+# hotfix/2.3.1-hotfix deploys as 2.3.1. Release branches keep the suffix.
+case "$BRANCH" in
+	refs/tags/*)
+		version="${BRANCH#refs/tags/}"
+		version="${version%%-*}"
+		;;
+	refs/heads/hotfix/*)
+		version="${BRANCH#refs/heads/hotfix/}"
+		version="${version%%-*}"
+		;;
+	refs/heads/*/*)
+		version="${BRANCH#refs/heads/*/}"
+		;;
+	*)
+		version=""
+		;;
+esac
 
-	if [[ $branch == hotfix ]];
-	then
-		# Now update the version variable with the hotfix removed as we don't want that going forward
-		version=$(echo "$version" | sed 's#[-hotfix].*$##')
-	fi
-fi
+# Both go into a command run on the server, so they are limited to
+# characters that need no quoting there.
+name_re='^[A-Za-z0-9][A-Za-z0-9._+-]*$'
+[[ "$version" =~ $name_re ]] || fail "No valid version found in '$BRANCH'."
+[[ "$ADDON_DIR" =~ $name_re ]] || fail "ADDON_DIR must be a single directory name, got '$ADDON_DIR'."
+[ -n "${SSH_PRIVATE_KEY:-}" ] || fail "SSH_PRIVATE_KEY is empty."
 
-if [ -z "$version" ];
-then
-  echo "No valid version found." >&2
-  exit 1
-fi
-
+releaseDir="vbec_products/$ADDON_DIR/$version"
 workspaceDir="${GITHUB_WORKSPACE:-$PWD}"
 cd "$(mktemp -d)"
 
 mkdir deployment
 
-if [ ! -z "$ADDON_ROOT" ];
+if [ -n "$ADDON_ROOT" ];
 then
-	releaseDir="vbec_products/$ADDON_DIR/$version"
-	addonDir="$releaseDir/$ADDON_ROOT"
+	addon="deployment/$ADDON_ROOT"
 
-	mkdir -p deployment/$ADDON_ROOT
-	cp -R "$workspaceDir"/* deployment/$ADDON_ROOT
+	mkdir -p "$addon"
+	cp -R "$workspaceDir"/* "$addon"
 
-	if [ -d deployment/$ADDON_ROOT/_files ]; then
-		cp -R deployment/$ADDON_ROOT/_files/* deployment/upload
-		rm -rf deployment/$ADDON_ROOT/_files
-	fi
-	
-	if [ -d deployment/$ADDON_ROOT/_no_upload ]; then
-		cp -R deployment/$ADDON_ROOT/_no_upload/* deployment
-		rm -rf deployment/$ADDON_ROOT/_no_upload
+	if [ -d "$addon/_files" ]; then
+		mkdir -p deployment/upload
+		cp -R "$addon"/_files/* deployment/upload
+		rm -rf "$addon/_files"
 	fi
 
-	if [ -f deployment/$ADDON_ROOT/build-server.json ]; then
+	if [ -d "$addon/_no_upload" ]; then
+		cp -R "$addon"/_no_upload/* deployment
+		rm -rf "$addon/_no_upload"
+	fi
+
+	if [ -f "$addon/build-server.json" ]; then
+		# Read first, so that invalid JSON stops the deploy.
+		commands="$(jq --raw-output '.exec // [] | .[]' "$addon/build-server.json")"
+
 		cd deployment
-
-		while read -r cmd; do
-			sh -c "${cmd}"
-		done < <(cat $ADDON_ROOT/build-server.json | jq --raw-output '.exec[]')
-
+		while IFS= read -r cmd; do
+			[ -n "$cmd" ] || continue
+			echo "+ $cmd"
+			# Without stdin, so that a command can't consume the list.
+			sh -c "$cmd" < /dev/null
+		done <<< "$commands"
 		cd ..
 	fi
 
-	rm -rf deployment/$ADDON_ROOT/.git
-	rm -rf deployment/$ADDON_ROOT/.github
-	rm -rf deployment/$ADDON_ROOT/_dev
-	rm -rf deployment/$ADDON_ROOT/_output
+	rm -rf "$addon/.git"
+	rm -rf "$addon/.github"
+	rm -rf "$addon/_dev"
+	rm -rf "$addon/_output"
 
 else
-	releaseDir="vbec_products/$ADDON_DIR/$version"
 	cp -R "$workspaceDir"/* deployment
 
 	rm -rf "deployment/.git"
@@ -83,52 +104,29 @@ else
 fi
 
 
-printf -- 'Setting up SSH... '
+echo 'Setting up SSH...'
 
 mkdir -p ~/.ssh
-touch ~/.ssh/known_hosts
-
-mkdir -p /root/.ssh
-touch /root/.ssh/known_hosts
-
-echo "$SSH_PRIVATE_KEY" > /root/.ssh/deploy_key
-echo "$SSH_PUBLIC_KEY" > /root/.ssh/deploy_key.pub
-
-echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-echo "$SSH_PUBLIC_KEY" > ~/.ssh/deploy_key.pub
-
 chmod 700 ~/.ssh
-chmod 600 ~/.ssh/known_hosts
-chmod 600 ~/.ssh/deploy_key
-chmod 600 ~/.ssh/deploy_key.pub
+(
+	umask 077
+	printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
 
-chmod 700 /root/.ssh
-chmod 600 /root/.ssh/known_hosts
-chmod 600 /root/.ssh/deploy_key
-chmod 600 /root/.ssh/deploy_key.pub
+	if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+		printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/deploy_known_hosts
+	else
+		echo "DEPLOY_KNOWN_HOSTS is not set, so the host key is trusted from ssh-keyscan." >&2
+		ssh-keyscan "$HOST_NAME" > ~/.ssh/deploy_known_hosts
+	fi
+)
 
-
-printf -- 'Recording known host... '
-
-ssh-keyscan $HOST_NAME >> ~/.ssh/known_hosts
-ssh-keyscan $HOST_NAME >> /root/.ssh/known_hosts
-
-
-printf -- 'Adding deploy key... '
-
-eval "$(ssh-agent -s)"
-ssh-add ~/.ssh/deploy_key
+ssh_cmd="ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/deploy_known_hosts"
 
 
-# $HOST_NAME is used in the above as well as in the below; that's why it is an env
+echo "Deploying $version to $SSH_USER@$HOST_NAME:$releaseDir..."
 
-printf -- 'Cleaning up old deployment... '
-sh -c "ssh $SSH_USER@$HOST_NAME 'rm -rf $releaseDir && mkdir -p $releaseDir'"
-
-
-printf -- 'Deploying project... '
-sh -c "rsync --progress --verbose --recursive --delete-after --quiet deployment/ $SSH_USER@$HOST_NAME:$releaseDir"
-
+$ssh_cmd "$SSH_USER@$HOST_NAME" "mkdir -p -- '$releaseDir'"
+rsync --recursive --delete --stats -e "$ssh_cmd" deployment/ "$SSH_USER@$HOST_NAME:$releaseDir/"
 
 
 printf -- '\033[32m Deployment successful! \033[0m\n'
